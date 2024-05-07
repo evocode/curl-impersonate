@@ -9,7 +9,6 @@
 # Use it as a common base.
 FROM python:3.11-slim-bookworm as builder
 {{/debian}}
-
 {{#alpine}}
 FROM alpine:3.18 as builder
 {{/alpine}}
@@ -129,6 +128,8 @@ RUN cd ${CURL_VERSION} && \
 RUN mkdir out && \
     cp /build/install/bin/curl-impersonate-chrome out/ && \
     ln -s curl-impersonate-chrome out/curl-impersonate && \
+    cp /build/install/bin/curl-impersonate-chrome-config out/ && \
+    ln -s curl-impersonate-chrome-config out/curl-impersonate-config && \
     strip out/curl-impersonate
 
 # Verify that the resulting 'curl' has all the necessary features.
@@ -137,10 +138,17 @@ RUN ./out/curl-impersonate -V | grep -q zlib && \
     ./out/curl-impersonate -V | grep -q nghttp2 && \
     ./out/curl-impersonate -V | grep -q -e BoringSSL
 
+RUN ./out/curl-impersonate-config --version | grep -q libcurl && \
+    ./out/curl-impersonate-config --libs | grep -q -e brotli -e bghttp2 && \
+    ./out/curl-impersonate-config --static-libs | grep -q -e brotli -e bghttp2 && \
+    ./out/curl-impersonate-config --prefix | grep -q \/build\/install && \
+    ./out/curl-impersonate-config --cflags | grep -q CURL_STATICLIB
+
 # Verify that the resulting 'curl' is really statically compiled
 RUN ! (ldd ./out/curl-impersonate | grep -q -e libcurl -e nghttp2 -e brotli -e ssl -e crypto)
 
 RUN rm -Rf /build/install
+RUN rm -Rf /build/install/bin
 
 # Re-compile libcurl dynamically
 RUN cd ${CURL_VERSION} && \

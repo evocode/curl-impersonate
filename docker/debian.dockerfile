@@ -12,7 +12,7 @@ WORKDIR /build
 
 # Common dependencies
 RUN apt-get update && \
-    apt-get install -y git ninja-build cmake curl zlib1g-dev
+    apt-get install -y git ninja-build cmake curl zlib1g-dev zstd libzstd-dev
 
 # The following are needed because we are going to change some autoconf scripts,
 # both for libnghttp2 and curl.
@@ -47,7 +47,7 @@ RUN curl -L https://github.com/google/boringssl/archive/${BORING_SSL_COMMIT}.zip
 # See https://boringssl.googlesource.com/boringssl/+/HEAD/BUILDING.md
 COPY patches/boringssl.patch boringssl/
 RUN cd boringssl && \
-    for p in $(ls boringssl-*.patch); do patch -p1 < $p; done && \
+    for p in $(ls boringssl.patch); do patch -p1 < $p; done && \
     mkdir build && cd build && \
     cmake \
         -DCMAKE_C_FLAGS="-Wno-error=array-bounds -Wno-error=stringop-overflow" \
@@ -84,7 +84,7 @@ RUN cd ${CURL_VERSION} && \
     for p in $(ls curl-*.patch); do patch -p1 < $p; done && \
     autoreconf -fi
 
-# Compile curl with nghttp2, libbrotli and boringssl (chrome).
+# Compile curl with nghttp2, libbrotli and boringssl.
 # Enable keylogfile for debugging of TLS traffic.
 RUN cd ${CURL_VERSION} && \
     ./configure --prefix=/build/install \
@@ -104,6 +104,8 @@ RUN cd ${CURL_VERSION} && \
 RUN mkdir out && \
     cp /build/install/bin/curl-impersonate-chrome out/ && \
     ln -s curl-impersonate-chrome out/curl-impersonate && \
+    cp /build/install/bin/curl-impersonate-chrome-config out/ && \
+    ln -s curl-impersonate-chrome-config out/curl-impersonate-config && \
     strip out/curl-impersonate
 
 # Verify that the resulting 'curl' has all the necessary features.
@@ -112,10 +114,17 @@ RUN ./out/curl-impersonate -V | grep -q zlib && \
     ./out/curl-impersonate -V | grep -q nghttp2 && \
     ./out/curl-impersonate -V | grep -q -e BoringSSL
 
+RUN ./out/curl-impersonate-config --version | grep -q libcurl && \
+    ./out/curl-impersonate-config --libs | grep -q -e brotli -e bghttp2 && \
+    ./out/curl-impersonate-config --static-libs | grep -q -e brotli -e bghttp2 && \
+    ./out/curl-impersonate-config --prefix | grep -q \/build\/install && \
+    ./out/curl-impersonate-config --cflags | grep -q CURL_STATICLIB
+
 # Verify that the resulting 'curl' is really statically compiled
 RUN ! (ldd ./out/curl-impersonate | grep -q -e libcurl -e nghttp2 -e brotli -e ssl -e crypto)
 
 RUN rm -Rf /build/install
+RUN rm -Rf /build/install/bin
 
 # Re-compile libcurl dynamically
 RUN cd ${CURL_VERSION} && \
@@ -147,8 +156,7 @@ RUN ! (ldd ./out/curl-impersonate | grep -q -e nghttp2 -e brotli -e ssl -e crypt
 COPY curl_chrome* curl_edge* curl_safari* out/
 RUN chmod +x out/curl_*
 
-# Create a final, minimal image with the compiled binaries
-# only.
+# Create a final, minimal image with the compiled binaries only.
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -160,3 +168,4 @@ RUN ldconfig
 COPY --from=builder /build/out /build/out
 # Wrapper scripts
 COPY --from=builder /build/out/curl_* /usr/local/bin/
+
